@@ -1,0 +1,5 @@
+opencv-python>=4.8.0
+pygame>=2.5.0
+# mediapipe is not compatible with Python 3.13
+# Alternative: Use opencv-python with built-in hand tracking
+# or downgrade to Python 3.11 for mediapipe support
