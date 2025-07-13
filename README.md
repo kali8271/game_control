@@ -10,6 +10,7 @@ A collection of Python games controlled by hand gestures and eye movements using
 - [How to Play](#-how-to-play)
 - [Game Controls](#-game-controls)
 - [Eye Control Guide](#-eye-control-guide)
+- [Scoring System](#-scoring-system)
 - [Technical Details](#-technical-details)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
@@ -27,7 +28,7 @@ A collection of Python games controlled by hand gestures and eye movements using
 - **Power-up System**: Double jump, speed boost, shield, time slow
 - **Particle Effects**: Visual feedback for actions
 - **Multiple Obstacles**: Normal, flying, and ground obstacles
-- **Scoring System**: Milestone-based scoring with high score tracking
+- **📊 Enhanced Scoring System**: Frequent updates with multiple scoring opportunities
 - **Advanced UI**: Game over screens, pause menus, main menu
 
 ### 🎨 **Visual Enhancements**
@@ -199,15 +200,44 @@ This will show you:
 
 ## 📊 Scoring System
 
-### **Milestone Scoring**
-- **+50 points** every 5 obstacles passed
+### **🎯 Comprehensive Scoring Breakdown**
+- **+10 points** for every obstacle passed
+- **+40 bonus points** every 5 obstacles (milestone)
+- **+20 points** every 10 seconds of survival
+- **+5 points** for successful landings
 - **+25 points** for each power-up collected
-- **High score tracking** with persistent storage
 
-### **Score Display**
-- **Current score** shown in real-time
-- **High score** displayed when available
-- **Milestone notifications** in console
+### **📈 Score Progression Example**
+```
+Time 0s:   Score 0    (Game starts)
+Time 2s:   Score 10   (1st obstacle passed)
+Time 4s:   Score 20   (2nd obstacle passed)
+Time 6s:   Score 30   (3rd obstacle passed)
+Time 8s:   Score 40   (4th obstacle passed)
+Time 10s:  Score 60   (5th obstacle + milestone + survival bonus)
+Time 12s:  Score 70   (6th obstacle passed)
+Time 20s:  Score 120  (10th obstacle + milestone + survival bonus)
+```
+
+### **🎮 Real-Time Feedback**
+The game provides console feedback for all scoring events:
+- `"Obstacle passed! Score: X"` - Every obstacle
+- `"Milestone reached! Score: X"` - Every 5 obstacles
+- `"Survival bonus! Score: X"` - Every 10 seconds
+- `"Safe landing! Score: X"` - Successful jumps
+- `"Power-up collected! Score: X"` - Power-up collection
+
+### **🏆 High Score System**
+- **Persistent storage** in `high_score.txt`
+- **Automatic updates** when new high score is achieved
+- **Display** shows current score and high score
+
+### **🎯 Scoring Strategy**
+- **Survive longer** - Time-based bonuses add up
+- **Collect power-ups** - 25 points each
+- **Jump safely** - Landing bonuses for good technique
+- **Avoid obstacles** - Each one passed = 10 points
+- **Plan milestones** - Every 5 obstacles = big bonus
 
 ## 🔧 Technical Details
 
@@ -255,6 +285,7 @@ game_control/
 ├── game_enhanced.py         # Enhanced features game
 ├── game_optimized.py        # Performance optimized game
 ├── game_alternative.py      # OpenCV-only game
+├── SCORING_SYSTEM.md        # Detailed scoring documentation
 └── high_score.txt          # High score storage (auto-generated)
 ```
 
@@ -294,6 +325,13 @@ game_control/
   - Close other applications
   - Use palm-controlled game for better performance
   - **Eye detection** may be slightly more CPU-intensive
+
+#### **Scoring Issues**
+- **Problem**: Score not updating frequently
+- **Solution**: ✅ **FIXED** - The scoring system has been improved to provide frequent updates
+  - **Before**: Score only increased every 5 obstacles
+  - **After**: Score increases with every obstacle + multiple bonus opportunities
+  - **Console feedback** shows all scoring events in real-time
 
 #### **MediaPipe Not Available**
 ```

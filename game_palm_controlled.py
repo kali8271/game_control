@@ -710,6 +710,9 @@ class PalmControlledGame:
         self.power_up_timers = {}
         self.last_obstacle_time = time.time()
         self.last_power_up_time = time.time()
+        self.game_start_time = time.time()
+        self.last_time_score = 0
+        self.last_landing_score = 0
         self.game_running = True
     
     def draw(self, position, size, detected, blink_detected=False):
