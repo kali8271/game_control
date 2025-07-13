@@ -185,6 +185,200 @@ class PalmDetector:
         
         return position, avg_size, "palm" if self.palm_detected else "no_palm"
 
+class EyeDetector:
+    """Eye tracking using OpenCV for game control"""
+    def __init__(self):
+        # Load pre-trained eye cascade classifier
+        self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Eye tracking parameters
+        self.eye_history = deque(maxlen=5)
+        self.frame_skip = 2
+        self.frame_count = 0
+        
+        # Eye control states
+        self.eye_detected = False
+        self.eye_position = "center"
+        self.pupil_detected = False
+        self.blink_detected = False
+        
+        # Calibration values
+        self.calibration_done = False
+        self.left_threshold = 0.4
+        self.right_threshold = 0.6
+        
+    def detect_eyes(self, frame):
+        """Detect eyes in the frame"""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+        
+        if len(faces) == 0:
+            return None, None
+        
+        # Get the largest face
+        face = max(faces, key=lambda x: x[2] * x[3])
+        x, y, w, h = face
+        
+        # Detect eyes in the face region
+        roi_gray = gray[y:y+h, x:x+w]
+        eyes = self.eye_cascade.detectMultiScale(roi_gray, 1.1, 5, minSize=(30, 30))
+        
+        if len(eyes) < 2:
+            return None, None
+        
+        # Sort eyes by x position (left to right)
+        eyes = sorted(eyes, key=lambda x: x[0])
+        
+        return eyes, (x, y, w, h)
+    
+    def detect_pupil(self, eye_roi):
+        """Detect pupil in eye region"""
+        # Convert to grayscale if needed
+        if len(eye_roi.shape) == 3:
+            gray = cv2.cvtColor(eye_roi, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = eye_roi
+        
+        # Apply Gaussian blur
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Apply threshold to find dark regions (pupil)
+        _, thresh = cv2.threshold(blurred, 50, 255, cv2.THRESH_BINARY_INV)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return None
+        
+        # Find the largest dark region (pupil)
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        if cv2.contourArea(largest_contour) < 50:  # Too small
+            return None
+        
+        # Get pupil center
+        M = cv2.moments(largest_contour)
+        if M["m00"] == 0:
+            return None
+        
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+        
+        return (cx, cy)
+    
+    def get_eye_position(self, eyes, face_rect, frame):
+        """Determine eye gaze direction"""
+        if len(eyes) < 2:
+            return "center"
+        
+        # Get the left eye (first in sorted list)
+        left_eye = eyes[0]
+        x, y, w, h = left_eye
+        
+        # Get face coordinates
+        fx, fy, fw, fh = face_rect
+        
+        # Create eye ROI from the original frame
+        eye_roi = frame[fy + y:fy + y + h, fx + x:fx + x + w]
+        pupil = self.detect_pupil(eye_roi)
+        
+        if pupil is None:
+            return "center"
+        
+        pupil_x, pupil_y = pupil
+        
+        # Normalize pupil position relative to eye width
+        relative_x = pupil_x / w
+        
+        # Determine gaze direction
+        if relative_x < self.left_threshold:
+            return "left"
+        elif relative_x > self.right_threshold:
+            return "right"
+        else:
+            return "center"
+    
+    def detect_blink(self, eyes):
+        """Detect if eyes are closed (blink)"""
+        if len(eyes) < 2:
+            return True  # Eyes not detected = blink
+        
+        # Check if eye regions are too small (closed eyes)
+        total_eye_area = sum(w * h for x, y, w, h in eyes[:2])
+        if total_eye_area < 2000:  # Threshold for closed eyes
+            return True
+        
+        return False
+    
+    def process_frame(self, frame):
+        """Process frame for eye tracking"""
+        self.frame_count += 1
+        
+        if self.frame_count % self.frame_skip != 0:
+            return self.get_smoothed_results()
+        
+        frame = cv2.flip(frame, 1)
+        eyes, face_rect = self.detect_eyes(frame)
+        
+        # Update eye state
+        self.eye_detected = eyes is not None and len(eyes) >= 2
+        self.blink_detected = self.detect_blink(eyes) if eyes is not None else True
+        
+        if self.eye_detected and not self.blink_detected:
+            self.eye_position = self.get_eye_position(eyes, face_rect, frame)
+            self.pupil_detected = True
+        else:
+            self.eye_position = "center"
+            self.pupil_detected = False
+        
+        self.eye_history.append(self.eye_position)
+        
+        # Draw eye detection
+        if face_rect is not None:
+            fx, fy, fw, fh = face_rect
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2)
+            
+            if eyes is not None:
+                for i, (x, y, w, h) in enumerate(eyes[:2]):  # Draw first 2 eyes
+                    eye_x, eye_y = fx + x, fy + y
+                    cv2.rectangle(frame, (eye_x, eye_y), (eye_x + w, eye_y + h), (0, 255, 0), 2)
+                    
+                    # Draw eye number
+                    cv2.putText(frame, f"Eye {i+1}", (eye_x, eye_y - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                    # Detect and draw pupil
+                    eye_roi = frame[eye_y:eye_y+h, eye_x:eye_x+w]
+                    pupil = self.detect_pupil(eye_roi)
+                    if pupil:
+                        px, py = pupil
+                        cv2.circle(frame, (eye_x + px, eye_y + py), 3, (0, 0, 255), -1)
+        
+        # Display eye info
+        cv2.putText(frame, f"Eye: {self.eye_position.upper()}", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Detected: {'YES' if self.eye_detected else 'NO'}", (10, 70),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Blink: {'YES' if self.blink_detected else 'NO'}", (10, 110),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Pupil: {'YES' if self.pupil_detected else 'NO'}", (10, 150),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        return self.get_smoothed_results()
+    
+    def get_smoothed_results(self):
+        """Get smoothed eye tracking results"""
+        if not self.eye_history:
+            return "center", False, False
+        
+        # Get most common position
+        positions = list(self.eye_history)
+        position = max(set(positions), key=positions.count)
+        
+        return position, self.eye_detected, self.blink_detected
+
 class GameOverScreen:
     def __init__(self, width, height):
         self.WIDTH = width
@@ -295,11 +489,11 @@ class ScoreManager:
         return self.high_score
 
 class PalmControlledGame:
-    def __init__(self):
+    def __init__(self, control_mode="palm"):
         pygame.init()
         self.WIDTH, self.HEIGHT = 1200, 700
         self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
-        pygame.display.set_caption("Palm-Controlled Game")
+        pygame.display.set_caption("Eye/Palm-Controlled Game")
         
         # Colors
         self.WHITE = (255, 255, 255)
@@ -348,8 +542,16 @@ class PalmControlledGame:
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
         
-        # Palm detection
-        self.detector = PalmDetector()
+        # Control mode
+        self.control_mode = control_mode
+        
+        # Detection systems
+        if control_mode == "eye":
+            self.detector = EyeDetector()
+            self.palm_detector = None
+        else:
+            self.detector = PalmDetector()
+            self.palm_detector = self.detector
         
         # Scoring system - FIXED
         self.obstacles_passed = 0
@@ -493,7 +695,7 @@ class PalmControlledGame:
         self.last_power_up_time = time.time()
         self.game_running = True
     
-    def draw(self, palm_position, palm_size, palm_detected):
+    def draw(self, position, size, detected, blink_detected=False):
         self.screen.fill(self.WHITE)
         
         pygame.draw.rect(self.screen, self.BLACK, (0, 560, self.WIDTH, 140))
@@ -525,15 +727,27 @@ class PalmControlledGame:
             high_score_text = self.font.render(f"High Score: {high_score}", True, self.BLUE)
             self.screen.blit(high_score_text, (10, 50))
         
-        # Palm detection info
-        palm_text = self.font.render(f"Palm: {palm_position.upper()}", True, self.BLACK)
-        self.screen.blit(palm_text, (10, 90 if high_score > 0 else 50))
-        
-        size_text = self.font.render(f"Size: {palm_size//1000}k", True, self.BLACK)
-        self.screen.blit(size_text, (10, 130 if high_score > 0 else 90))
-        
-        detected_text = self.font.render(f"Detected: {'YES' if palm_detected else 'NO'}", True, self.BLACK)
-        self.screen.blit(detected_text, (10, 170 if high_score > 0 else 130))
+        # Detection info based on control mode
+        if self.control_mode == "eye":
+            # Eye detection info
+            eye_text = self.font.render(f"Eye: {position.upper()}", True, self.BLACK)
+            self.screen.blit(eye_text, (10, 90 if high_score > 0 else 50))
+            
+            detected_text = self.font.render(f"Detected: {'YES' if detected else 'NO'}", True, self.BLACK)
+            self.screen.blit(detected_text, (10, 130 if high_score > 0 else 90))
+            
+            blink_text = self.font.render(f"Blink: {'YES' if blink_detected else 'NO'}", True, self.BLACK)
+            self.screen.blit(blink_text, (10, 170 if high_score > 0 else 130))
+        else:
+            # Palm detection info
+            palm_text = self.font.render(f"Palm: {position.upper()}", True, self.BLACK)
+            self.screen.blit(palm_text, (10, 90 if high_score > 0 else 50))
+            
+            size_text = self.font.render(f"Size: {size//1000}k", True, self.BLACK)
+            self.screen.blit(size_text, (10, 130 if high_score > 0 else 90))
+            
+            detected_text = self.font.render(f"Detected: {'YES' if detected else 'NO'}", True, self.BLACK)
+            self.screen.blit(detected_text, (10, 170 if high_score > 0 else 130))
         
         # Power-up status
         y_offset = 210 if high_score > 0 else 170
@@ -556,15 +770,25 @@ class PalmControlledGame:
             text = self.small_font.render("Time Slow Active!", True, self.MAGENTA)
             self.screen.blit(text, (10, y_offset))
         
-        # Instructions
-        instructions = [
-            "Palm Controls:",
-            "Left side = Move Left",
-            "Right side = Move Right", 
-            "Center + Large = Jump",
-            "Collect power-ups for points",
-            "Press 'q' to quit"
-        ]
+        # Instructions based on control mode
+        if self.control_mode == "eye":
+            instructions = [
+                "Eye Controls:",
+                "Look left = Move Left",
+                "Look right = Move Right", 
+                "Blink = Jump",
+                "Collect power-ups for points",
+                "Press 'q' to quit"
+            ]
+        else:
+            instructions = [
+                "Palm Controls:",
+                "Left side = Move Left",
+                "Right side = Move Right", 
+                "Center + Large = Jump",
+                "Collect power-ups for points",
+                "Press 'q' to quit"
+            ]
         
         for i, instruction in enumerate(instructions):
             text = self.small_font.render(instruction, True, self.BLACK)
@@ -575,8 +799,12 @@ class PalmControlledGame:
     def run(self):
         cap = cv2.VideoCapture(0)
         
-        print("Palm-Controlled Game Started!")
-        print("Controls: Move palm left/right to move, bring palm closer to jump")
+        if self.control_mode == "eye":
+            print("Eye-Controlled Game Started!")
+            print("Controls: Look left/right to move, blink to jump")
+        else:
+            print("Palm-Controlled Game Started!")
+            print("Controls: Move palm left/right to move, bring palm closer to jump")
         
         running = True
         last_time = time.time()
@@ -597,25 +825,53 @@ class PalmControlledGame:
             if not ret:
                 break
             
-            palm_position, palm_size, palm_detected = self.detector.process_frame(frame)
-            
-            # Game logic based on palm position and size
-            if palm_position == "right":
-                speed = 12 if self.speed_boost_active else 8
-                self.player.x = min(self.WIDTH - self.player.width, self.player.x + speed)
-            elif palm_position == "left":
-                speed = 12 if self.speed_boost_active else 8
-                self.player.x = max(0, self.player.x - speed)
-            elif palm_position == "center" and palm_size > 30000:  # Large palm = jump
-                if not self.jumping:
-                    self.jumping = True
-                    self.jump_velocity = 15
-                    self.create_particles(self.player.centerx, self.player.bottom, self.GREEN, 8)
-                elif self.double_jump_available and not self.double_jumping:
-                    self.double_jumping = True
-                    self.jump_velocity = 12
-                    self.double_jump_available = False
-                    self.create_particles(self.player.centerx, self.player.bottom, self.MAGENTA, 12)
+            # Process frame based on control mode
+            if self.control_mode == "eye":
+                eye_position, eye_detected, blink_detected = self.detector.process_frame(frame)
+                
+                # Game logic based on eye position and blink
+                if eye_position == "right":
+                    speed = 12 if self.speed_boost_active else 8
+                    self.player.x = min(self.WIDTH - self.player.width, self.player.x + speed)
+                elif eye_position == "left":
+                    speed = 12 if self.speed_boost_active else 8
+                    self.player.x = max(0, self.player.x - speed)
+                elif blink_detected:  # Blink = jump
+                    if not self.jumping:
+                        self.jumping = True
+                        self.jump_velocity = 15
+                        self.create_particles(self.player.centerx, self.player.bottom, self.GREEN, 8)
+                    elif self.double_jump_available and not self.double_jumping:
+                        self.double_jumping = True
+                        self.jump_velocity = 12
+                        self.double_jump_available = False
+                        self.create_particles(self.player.centerx, self.player.bottom, self.MAGENTA, 12)
+                
+                position, size, detected = eye_position, 0, eye_detected
+                blink_detected = blink_detected
+            else:
+                palm_position, palm_size, palm_detected = self.detector.process_frame(frame)
+                
+                # Game logic based on palm position and size
+                if palm_position == "right":
+                    speed = 12 if self.speed_boost_active else 8
+                    self.player.x = min(self.WIDTH - self.player.width, self.player.x + speed)
+                elif palm_position == "left":
+                    speed = 12 if self.speed_boost_active else 8
+                    self.player.x = max(0, self.player.x - speed)
+                elif palm_position == "center" and palm_size > 30000:  # Large palm = jump
+                    if not self.jumping:
+                        self.jumping = True
+                        self.jump_velocity = 15
+                        self.create_particles(self.player.centerx, self.player.bottom, self.GREEN, 8)
+                    elif self.double_jump_available and not self.double_jumping:
+                        self.double_jumping = True
+                        self.jump_velocity = 12
+                        self.double_jump_available = False
+                        self.create_particles(self.player.centerx, self.player.bottom, self.MAGENTA, 12)
+                
+                position, size, detected = palm_position, palm_size, palm_detected
+                blink_detected = False
             
             # Update game state
             self.handle_jump()
@@ -641,9 +897,11 @@ class PalmControlledGame:
             self.update_power_up_timers(dt)
             self.update_particles()
             
-            self.draw(palm_position, palm_size, palm_detected)
+            self.draw(position, size, detected, blink_detected)
             
-            cv2.imshow("Palm Detection", frame)
+            # Show appropriate window title
+            window_title = "Eye Detection" if self.control_mode == "eye" else "Palm Detection"
+            cv2.imshow(window_title, frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -657,13 +915,32 @@ class PalmControlledGame:
         return "exit"
 
 def main():
-    print("Palm-Controlled Game")
+    print("Eye/Palm-Controlled Game")
     print("=" * 30)
-    print("Move your palm left/right to control the character")
-    print("Bring your palm closer to the camera to jump")
+    print("Choose your control method:")
+    print("1. Eye Control - Look left/right to move, blink to jump")
+    print("2. Palm Control - Move palm left/right to move, bring palm closer to jump")
     print()
     
-    game = PalmControlledGame()
+    while True:
+        choice = input("Enter 1 for Eye Control or 2 for Palm Control: ").strip()
+        if choice == "1":
+            control_mode = "eye"
+            print("\nEye Control Selected!")
+            print("Make sure your face is well-lit and visible to the camera.")
+            print("Look left/right to move, blink to jump.")
+            break
+        elif choice == "2":
+            control_mode = "palm"
+            print("\nPalm Control Selected!")
+            print("Move your palm left/right to control the character.")
+            print("Bring your palm closer to the camera to jump.")
+            break
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+    
+    print()
+    game = PalmControlledGame(control_mode)
     game.run()
 
 if __name__ == "__main__":
