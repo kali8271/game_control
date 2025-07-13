@@ -553,9 +553,11 @@ class PalmControlledGame:
             self.detector = PalmDetector()
             self.palm_detector = self.detector
         
-        # Scoring system - FIXED
+        # Scoring system - IMPROVED
         self.obstacles_passed = 0
-        self.score_update_interval = 5  # Score every 5 obstacles passed
+        self.score_update_interval = 5  # Bonus every 5 obstacles passed
+        self.game_start_time = time.time()
+        self.last_time_score = 0
     
     def create_particles(self, x, y, color, count=10):
         for _ in range(count):
@@ -574,6 +576,16 @@ class PalmControlledGame:
                 self.jumping = False
                 self.double_jumping = False
                 self.jump_velocity = 0
+                
+                # Small score bonus for successful landing
+                if not hasattr(self, 'last_landing_score'):
+                    self.last_landing_score = 0
+                
+                current_time = time.time()
+                if current_time - self.last_landing_score > 1.0:  # Prevent spam
+                    self.score += 5
+                    self.last_landing_score = current_time
+                    print(f"Safe landing! Score: {self.score}")
     
     def spawn_obstacles(self):
         current_time = time.time()
@@ -617,10 +629,15 @@ class PalmControlledGame:
                 self.obstacles.remove(obstacle_data)
                 self.obstacles_passed += 1
                 
-                # FIXED SCORING: Only score every 5 obstacles passed
+                # IMPROVED SCORING: Score for every obstacle + bonus milestones
+                self.score += 10  # Base score for each obstacle
+                
+                # Bonus milestone every 5 obstacles
                 if self.obstacles_passed % self.score_update_interval == 0:
-                    self.score += 50  # Bigger score for milestone
+                    self.score += 40  # Additional 40 points for milestone (50 total)
                     print(f"Milestone reached! Score: {self.score}")
+                else:
+                    print(f"Obstacle passed! Score: {self.score}")
         
         return True
     
@@ -896,6 +913,14 @@ class PalmControlledGame:
             self.update_power_ups()
             self.update_power_up_timers(dt)
             self.update_particles()
+            
+            # Time-based scoring (every 10 seconds)
+            current_time = time.time()
+            time_alive = current_time - self.game_start_time
+            if time_alive - self.last_time_score >= 10.0:
+                self.score += 20
+                self.last_time_score = time_alive
+                print(f"Survival bonus! Score: {self.score}")
             
             self.draw(position, size, detected, blink_detected)
             
